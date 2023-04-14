@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>LeitzSensor</title>
+  <meta name="viewport" content="width=device-width,height=device-height,initial-scale=1.0" />
+</head>
+
+<body>
+  <h2 style="text-align: center">LeitzSensor</h2>
+  <button onclick="connect()">Connect</button>
+
+  <script>
+    const serviceUuid = "19b10000-e8f2-537e-4f6c-d104768a1214";
+    let characteristicUuid = 0x0001;
+    let myCharacteristic;
+    let myValue = 0;
+    let acceleration;
+
+    async function connect() {
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ services: [serviceUuid] }]
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(serviceUuid);
+        myCharacteristic = await service.getCharacteristic(characteristicUuid);
+        myCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
+        await myCharacteristic.startNotifications();
+      } catch (error) {
+        console.error(error);
+      }
+    }
+
+    function handleCharacteristicValueChanged(event) {
+      myValue = event.target.value;
+      acceleration = myValue.split('|');
+      console.log('Acceleration: ', acceleration);
+
+      // Send a web notification with the received value
+      if (Notification.permission === "granted") {
+        const notification = new Notification(`Acceleration: ${acceleration}`);
+      } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().then(permission => {
+          if (permission === "granted") {
+            const notification = new Notification(`Acceleration: ${acceleration}`);
+          }
+        });
+      }
+    }
+
+    // Send a web notification with the received value every 20 seconds
+    setInterval(() => {
+      if (Notification.permission === "granted") {
+        const notification = new Notification(`Acceleration: ${acceleration}`);
+      } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().then(permission => {
+          if (permission === "granted") {
+            const notification = new Notification(`Acceleration: ${acceleration}`);
+          }
+        });
+      }
+    }, 20000);
+
+  </script>
+
+</body>
+
+</html>
+
