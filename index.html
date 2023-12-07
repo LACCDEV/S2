@@ -1,70 +1,371 @@
+
 <!DOCTYPE html>
 <html>
-
 <head>
-  <title>LeitzSensor</title>
-  <meta name="viewport" content="width=device-width,height=device-height,initial-scale=1.0" />
+    <title>Leitz Sensor KI Training</title>
+    <h1>Leitz Sensor KI Training</h1> 
+
+    <div class="status widget">
+      <button id="pairButton">CONNECT</button>
+      <div class="label statusBar" id="bluetooth">Click the connect button to connect your device</div>
+    </div>
+
 </head>
-
 <body>
-  <h2 style="text-align: center">LeitzSensor</h2>
-  <button onclick="connect()">Connect</button>
 
-  <script>
-    const serviceUuid = "19b10000-e8f2-537e-4f6c-d104768a1214";
-    let characteristicUuid = 0x0001;
-    let myCharacteristic;
-    let myValue = 0;
-    let acceleration;
+  <div><span id="mx-value">Mx: </span></div>
+  <div><span id="my-value">My: </span></div>
+  <div><span id="mz-value">Mz: </span></div>
 
-    async function connect() {
-      try {
-        const device = await navigator.bluetooth.requestDevice({
-          filters: [{ services: [serviceUuid] }]
-        });
-        const server = await device.gatt.connect();
-        const service = await server.getPrimaryService(serviceUuid);
-        myCharacteristic = await service.getCharacteristic(characteristicUuid);
-        myCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
-        await myCharacteristic.startNotifications();
-      } catch (error) {
-        console.error(error);
-      }
+<div class="calibrate-button">
+  <button id="calibrateButton">Calibrate</button>
+</div>
+
+  <div><span id="calibrated-mx-value">Calibrated Mx: </span></div>
+  <div><span id="calibrated-my-value">Calibrated My: </span></div>
+  <div><span id="calibrated-mz-value">Calibrated Mz: </span></div>
+
+
+    <button type="button" onclick="init()">Start KI</button>
+    <button type="button" onclick="startRecording()">Start Aufzeichnung</button>
+    <button type="button" onclick="stopRecording()">Stop Aufzeichnung</button>
+    <button type="button" onclick="copyRecordedLabels()">Kopieren</button>
+    <div><canvas id="canvas"></canvas></div>
+    <div id="label-container"></div>
+    <div id="result-label"></div>
+    <ul id="recorded-labels"></ul>
+
+    <!-- JavaScript libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+
+    <script type="text/javascript">
+        const URL = "https://teachablemachine.withgoogle.com/models/22Bbb-z-h/";
+        let model, webcam, ctx, labelContainer, maxPredictions;
+        let isRecording = false;
+        let recordedLabels = [];
+
+        async function init() {
+        const modelURL = URL + "model.json";
+        const metadataURL = URL + "metadata.json";
+
+        // load the model and metadata
+        // Refer to tmImage.loadFromFiles() in the API to support files from a file picker
+        // Note: the pose library adds a tmPose object to your window (window.tmPose)
+        model = await tmPose.load(modelURL, metadataURL);
+        maxPredictions = model.getTotalClasses();
+
+        // Convenience function to setup a webcam
+        const size = 200;
+        const flip = true; // whether to flip the webcam
+        webcam = new tmPose.Webcam(size, size, flip); // width, height, flip
+        await webcam.setup(); // request access to the webcam
+        await webcam.play();
+        window.requestAnimationFrame(loop);
+
+        // append/get elements to the DOM
+        const canvas = document.getElementById("canvas");
+        canvas.width = size; canvas.height = size;
+        ctx = canvas.getContext("2d");
+        labelContainer = document.getElementById("label-container");
+        for (let i = 0; i < maxPredictions; i++) { // and class labels
+            labelContainer.appendChild(document.createElement("div"));
+        }
     }
 
-    function handleCharacteristicValueChanged(event) {
-      myValue = event.target.value;
-      acceleration = myValue.split('|');
-      console.log('Acceleration: ', acceleration);
+          async function startRecording() {
+            if (!isRecording) {
+                isRecording = true;
+                recordedLabels = [];
+                await recordLabel(); // Starte die Aufzeichnung
+            }
+        }
 
-      // Send a web notification with the received value
-      if (Notification.permission === "granted") {
-        const notification = new Notification(`Acceleration: ${acceleration}`);
-      } else if (Notification.permission !== "denied") {
-        Notification.requestPermission().then(permission => {
-          if (permission === "granted") {
-            const notification = new Notification(`Acceleration: ${acceleration}`);
-          }
-        });
-      }
+        async function stopRecording() {
+            isRecording = false;
+        }
+
+        async function recordLabel() {
+            if (isRecording) {
+                const label = await predict();
+                recordedLabels.push(label); // Füge das erkannte Label hinzu
+                updateRecordedLabelsList(); // Aktualisiere die Liste
+                setTimeout(recordLabel, 1000); // Wiederhole alle 1 Sekunden
+            }
+        }
+
+        async function getTopPrediction() {
+            // Ermittle das erkannte Label mit der höchsten Wahrscheinlichkeit
+            const topPrediction = model.getPredictedClass();
+            return topPrediction.className;
+        }
+
+function updateRecordedLabelsList() {
+    const recordedList = document.getElementById("recorded-labels");
+    const resultLabel = document.getElementById("result-label").textContent; // Get the recognized label
+    const labelWithoutPrefix = resultLabel.replace("Erkanntes Label: ", ""); // Remove the prefix
+
+    // Include the recognized label and calibrated values in the recorded labels
+    const newLabel = document.createElement("li");
+    newLabel.innerText = `${labelWithoutPrefix} ${calibratedMxVal} ${calibratedMyVal} ${calibratedMzVal}`;
+
+    // Add the new label to the recorded labels list
+    recordedList.appendChild(newLabel);
+}
+
+        async function copyRecordedLabels() {
+            const copiedLabels = recordedLabels.join(', ');
+            alert(`Aufgezeichnete Labels: ${copiedLabels}`);
+        }
+
+    async function loop(timestamp) {
+        webcam.update(); // update the webcam frame
+        await predict();
+        window.requestAnimationFrame(loop);
+    }
+        async function predict() {
+        // Prediction #1: run input through posenet
+        // estimatePose can take in an image, video or canvas html element
+        const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+        // Prediction 2: run input through teachable machine classification model
+        const prediction = await model.predict(posenetOutput);
+
+        for (let i = 0; i < maxPredictions; i++) {
+            const classPrediction =
+                prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+            labelContainer.childNodes[i].innerHTML = classPrediction;
+        }
+
+        // finally draw the poses
+        drawPose(pose);
+
+            // Zeigen Sie das erkannte Label in der separaten Zeile an
+            const topPrediction = prediction.reduce((max, prediction) => max.probability > prediction.probability ? max : prediction);
+            const resultLabel = document.getElementById("result-label");
+            resultLabel.innerHTML = `Erkanntes Label: ${topPrediction.className}`;
+        }
+
+    function drawPose(pose) {
+        if (webcam.canvas) {
+            ctx.drawImage(webcam.canvas, 0, 0);
+            // draw the keypoints and skeleton
+            if (pose) {
+                const minPartConfidence = 0.5;
+                tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
+                tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
+            }
+        }
     }
 
-    // Send a web notification with the received value every 20 seconds
-    setInterval(() => {
-      if (Notification.permission === "granted") {
-        const notification = new Notification(`Acceleration: ${acceleration}`);
-      } else if (Notification.permission !== "denied") {
-        Notification.requestPermission().then(permission => {
-          if (permission === "granted") {
-            const notification = new Notification(`Acceleration: ${acceleration}`);
-          }
-        });
+  var maxRecords = 64;
+  var mxValue = 0;
+  var myValue = 0;
+  var mzValue = 0;
+  var NoteStatus = 0;
+
+var NiclaSenseME = {
+    magnet:
+    {
+      uuid: '19b10000-7001-537e-4f6c-d104768a1214',
+      properties: ['BLENotify'],
+      structure: ['Float32', 'Float32', 'Float32'],
+      data: { 'Mx': [], 'My': [], 'Mz': [] }
+    }
+};
+
+  const sensors = Object.keys(NiclaSenseME);
+  const SERVICE_UUID = '19b10000-0000-537e-4f6c-d104768a1214';
+  var bytesReceived = 0;
+  var bytesPrevious = 0;
+
+  // UI elements
+  const pairButton = document.getElementById('pairButton');
+  const BLEstatus = document.getElementById('bluetooth');
+
+
+  if ("bluetooth" in navigator) {
+    pairButton.addEventListener('click', function (event) {
+      connect();
+    });
+    // else the browser doesn't support bluetooth
+  } else {
+    msg("browser not supported"); /*pairButton.style.backgroundColor = "red";*/
+    snack("Error: This browser doesn't support Web Bluetooth. Try using Chrome.", 1);
+  }
+
+  // Top middle information label
+  function msg(m) {
+    BLEstatus.innerHTML = m;
+  }
+
+  async function connect() {
+    pairButton.style.backgroundColor = "grey";
+    pairButton.style.color = 'black';
+    pairButton.innerHTML = "PAIRING";
+    msg('requesting device ...');
+
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [
+        {
+          services: [SERVICE_UUID] // SERVICE_UUID
+        }
+      ]
+    });
+
+    msg('connecting to device ...');
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    const server = await device.gatt.connect();
+
+    msg('getting primary service ...');
+    const service = await server.getPrimaryService(SERVICE_UUID);
+
+    // Set up the characteristics
+    for (const sensor of sensors) {
+      msg('characteristic ' + sensor + "...");
+      NiclaSenseME[sensor].characteristic = await service.getCharacteristic(NiclaSenseME[sensor].uuid);
+      // Set up notification
+      if (NiclaSenseME[sensor].properties.includes("BLENotify")) {
+        NiclaSenseME[sensor].characteristic.addEventListener('characteristicvaluechanged', function (event) { handleIncoming(NiclaSenseME[sensor], event.target.value); });
+        await NiclaSenseME[sensor].characteristic.startNotifications();
       }
-    }, 20000);
+      // Set up polling for read
+      if (NiclaSenseME[sensor].properties.includes("BLERead")) {
+        NiclaSenseME[sensor].polling = setInterval(function () {
+          NiclaSenseME[sensor].characteristic.readValue().then(function (data) { handleIncoming(NiclaSenseME[sensor], data); })
+        }
+          , 500);
+      }
 
-  </script>
+      NiclaSenseME[sensor].rendered = false;
+    }
+    pairButton.style.backgroundColor = 'green';
+    pairButton.style.color = 'white';
+    pairButton.innerHTML = "PAIRED";
+    msg('Characteristics configured');
+  }
 
+function handleIncoming(sensor, dataReceived) {
+  const columns = Object.keys(sensor.data);
+    const typeMap = {
+      "Uint8": { fn: DataView.prototype.getUint8, bytes: 1 },
+      "Uint16": { fn: DataView.prototype.getUint16, bytes: 2 },
+      "Uint32": { fn: DataView.prototype.getUint32, bytes: 4 },
+      "Int16": { fn: DataView.prototype.getInt16, bytes: 2 },
+      "Float32": { fn: DataView.prototype.getFloat32, bytes: 4 }
+    };
+    var packetPointer = 0, i = 0;
+
+    // Read each sensor value in the BLE packet and push into the data array
+    sensor.structure.forEach(function (dataType) {
+      // Lookup function to extract data for given sensor property type
+      var dataViewFn = typeMap[dataType].fn.bind(dataReceived);
+      // Read sensor ouput value - true => Little Endian
+      var unpackedValue = dataViewFn(packetPointer, true);
+      // Push sensor reading onto data array
+      sensor.data[columns[i]].push(unpackedValue);
+      // Keep array at buffer size
+      if (sensor.data[columns[i]].length > maxRecords) { sensor.data[columns[i]].shift(); }
+      // move pointer forward in data packet to next value
+      packetPointer += typeMap[dataType].bytes;
+      bytesReceived += typeMap[dataType].bytes;
+      i++;
+    });
+
+  updateSensorValues(sensor.data);
+  }
+
+  function onDisconnected(event) {
+    let device = event.target;
+    pairButton.style.backgroundColor = "red";
+    pairButton.innerHTML = "PAIR LEITZ";
+    // clear read polling
+    for (const sensor of sensors) {
+      if (typeof NiclaSenseME[sensor].polling !== 'undefined') {
+        clearInterval(NiclaSenseME[sensor].polling);
+      }
+    }  
+  }
+
+function updateSensorValues(sensorData) {
+  mxValue = parseInt(sensorData['Mx'][sensorData['Mx'].length - 1]);
+  myValue = parseInt(sensorData['My'][sensorData['My'].length - 1]);
+  mzValue = parseInt(sensorData['Mz'][sensorData['Mz'].length - 1]);
+
+  const mxValueElement = document.getElementById('mx-value');
+  const myValueElement = document.getElementById('my-value');
+  const mzValueElement = document.getElementById('mz-value');
+
+  mxValueElement.textContent = `Mx: ${mxValue}`;
+  myValueElement.textContent = `My: ${myValue}`;
+  mzValueElement.textContent = `Mz: ${mzValue}`;
+
+}
+
+// Variables for storing the calibration values
+var calibratedMx = 0;
+var calibratedMy = 0;
+var calibratedMz = 0;
+var calibratedMxVal = 0;
+var calibratedMyVal = 0;
+var calibratedMzVal = 0;
+
+// UI elements for displaying calibrated values
+const calibratedMxElement = document.getElementById('calibrated-mx-value');
+const calibratedMyElement = document.getElementById('calibrated-my-value');
+const calibratedMzElement = document.getElementById('calibrated-mz-value');
+const calibrateButton = document.getElementById('calibrateButton');
+
+calibrateButton.addEventListener('click', function () {
+  // Store the current values as calibration values
+  calibratedMx = mxValue;
+  calibratedMy = myValue;
+  calibratedMz = mzValue;
+
+  // Display the calibrated values
+  calibratedMxElement.textContent = `Calibrated Mx: ${calibratedMx}`;
+  calibratedMyElement.textContent = `Calibrated My: ${calibratedMy}`;
+  calibratedMzElement.textContent = `Calibrated Mz: ${calibratedMz}`;
+});
+
+// Function to update sensor values, considering calibration
+function updateSensorValues(sensorData) {
+  mxValue = parseInt(sensorData['Mx'][sensorData['Mx'].length - 1]);
+  myValue = parseInt(sensorData['My'][sensorData['My'].length - 1]);
+  mzValue = parseInt(sensorData['Mz'][sensorData['Mz'].length - 1]);
+
+  // Subtract calibration values from the incoming values
+  const calibratedMxValue = mxValue - calibratedMx;
+  const calibratedMyValue = myValue - calibratedMy;
+  const calibratedMzValue = mzValue - calibratedMz;
+
+  calibratedMxVal = calibratedMxValue;
+  calibratedMyVal = calibratedMyValue;
+  calibratedMzVal = calibratedMzValue;
+
+  const mxValueElement = document.getElementById('mx-value');
+  const myValueElement = document.getElementById('my-value');
+  const mzValueElement = document.getElementById('mz-value');
+
+  mxValueElement.textContent = `Mx: ${mxValue}`;
+  myValueElement.textContent = `My: ${myValue}`;
+  mzValueElement.textContent = `Mz: ${mzValue}`;
+
+  // Display the calibrated values
+  calibratedMxElement.textContent = `Calibrated Mx: ${calibratedMxValue}`;
+  calibratedMyElement.textContent = `Calibrated My: ${calibratedMyValue}`;
+  calibratedMzElement.textContent = `Calibrated Mz: ${calibratedMzValue}`;
+}
+
+    </script>
+
+<style>
+
+  body {
+    padding: 20px;
+    font-family: 'Roboto', sans-serif; /* Add this line */
+  }
+
+
+</style>
 </body>
-
 </html>
-
